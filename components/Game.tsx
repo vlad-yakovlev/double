@@ -7,12 +7,13 @@ import {
   useState,
 } from 'react';
 import { Map, Record } from 'immutable';
-import { Block, BlockPosition, creatRandomPower } from '../classes/block';
+import { Block, BlockPosition, createRandomPower } from '../classes/block';
 import { COLS_COUNT, ROWS_COUNT } from '../constants';
 import { getRange } from '../utils/array';
 import { Controls } from './Controls';
 import { Button } from './Button';
 import { Overlay } from './Overlay';
+import { getBlockValue } from '../utils/block';
 
 const COLUMNS = getRange(0, COLS_COUNT);
 const KeyFactory = Record<BlockPosition>({ column: 0, row: 0 });
@@ -23,9 +24,10 @@ export const Game: FC = () => {
   const blocksRef = useRef(Map<Record<BlockPosition>, Block>());
   const [isLoading, setLoading] = useState(false);
   const [columnsForUpdate, setColumnsForUpdate] = useState<number[]>([]);
-  const [awaitingPower, setAwaitingPower] = useState<number>(creatRandomPower(1, 1));
-  const [minPower, setMinPower] = useState(1); // Until 2048
-  const [maxPower, setMaxPower] = useState(6);
+  const [awaitingPower, setAwaitingPower] = useState<number>(createRandomPower(1, 1));
+  const minPower = useRef(1);
+  const maxPower = useRef(6);
+  const [message, setMessage] = useState('');
 
   const getBlock = useCallback((column: number, row: number) => {
     return blocksRef.current.get(getKey(column, row));
@@ -122,17 +124,33 @@ export const Game: FC = () => {
     for (; getBlock(column, row); row++);
 
     if (!isLoading && (row < ROWS_COUNT || getBlock(column, row - 1)?.power === awaitingPower)) {
-      setAwaitingPower(creatRandomPower(minPower, maxPower));
+      setAwaitingPower(createRandomPower(minPower.current, maxPower.current));
       await insertBlock(awaitingPower, column, row);
     }
-  }, [awaitingPower, getBlock, insertBlock, isLoading, maxPower, minPower]);
+  }, [awaitingPower, getBlock, insertBlock, isLoading]);
 
   const isGameOver = useMemo(() => {
-    return !isLoading && COLUMNS.every((column) => {
+    return COLUMNS.every((column) => {
       const block = getBlock(column, ROWS_COUNT - 1);
       return block && block.power !== awaitingPower;
     });
-  }, [awaitingPower, getBlock, isLoading]);
+  }, [awaitingPower, getBlock]);
+
+  const updateBounds = useCallback(() => {
+    const maxAllowedPower = minPower.current * 3 + 2 ** 3; // Looks more magical then 8
+    const hasGreaterPower = blocksRef.current.some((block) => block.power > maxAllowedPower);
+    if (!hasGreaterPower) return;
+
+    setMessage(`${getBlockValue(minPower.current)} cleared`);
+    minPower.current++;
+    maxPower.current++;
+
+    blocksRef.current.forEach((block, key) => {
+      if (block.power < minPower.current) {
+        removeBlock(key.get('column'), key.get('row'));
+      }
+    });
+  }, [removeBlock]);
 
   useEffect(() => {
     (async () => {
@@ -143,8 +161,21 @@ export const Game: FC = () => {
         await updateColumn(columnForUpdate);
         setLoading(false);
       }
+
+      if (!isLoading && !columnsForUpdate.length) {
+        const prevBlocks = blocksRef.current;
+        updateBounds();
+
+        if (blocksRef.current !== prevBlocks) {
+          setLoading(true);
+          await Promise.all(COLUMNS.map((column) => normalizeColumn(column)));
+          setColumnsForUpdate(COLUMNS);
+          setAwaitingPower(createRandomPower(minPower.current, maxPower.current));
+          setLoading(false);
+        }
+      }
     })();
-  }, [isLoading, columnsForUpdate, updateColumn]);
+  }, [isLoading, columnsForUpdate, updateColumn, updateBounds, normalizeColumn]);
 
   return (
     <div className="relative w-92 bg-slate-900 rounded-2xl select-none">
@@ -165,12 +196,24 @@ export const Game: FC = () => {
 
       <Controls awaitingPower={awaitingPower} />
 
-      {isGameOver && (
-        <Overlay>
-          <div className="text-4xl text-white uppercase">Game over</div>
-          <Button onClick={() => window.location.reload()}>Restart</Button>
-        </Overlay>
+      {!isLoading && !columnsForUpdate.length && (
+        <>
+          {isGameOver && (
+          <Overlay>
+            <div className="text-4xl text-white uppercase">Game over</div>
+            <Button onClick={() => window.location.reload()}>Restart</Button>
+          </Overlay>
+          )}
+
+          {message ? (
+            <Overlay>
+              <div className="text-4xl text-white uppercase">{message}</div>
+              <Button onClick={() => setMessage('')}>Got it!</Button>
+            </Overlay>
+          ) : null}
+        </>
       )}
+
     </div>
   );
 };

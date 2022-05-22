@@ -75,6 +75,6 @@ export class Block {
   }
 }
 
-export const creatRandomPower = (minPower: number, maxPower: number) => {
+export const createRandomPower = (minPower: number, maxPower: number) => {
   return Math.floor(Math.random() * (maxPower - minPower + 1) + minPower);
 };
