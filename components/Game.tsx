@@ -11,8 +11,6 @@ import { COLS_COUNT, ROWS_COUNT } from '../constants';
 import { getRange } from '../utils/array';
 import { Controls } from './Controls';
 
-type Task = () => Promise<void>;
-
 const COLUMNS = getRange(0, COLS_COUNT);
 const KeyFactory = Record<BlockPosition>({ column: 0, row: 0 });
 const getKey = (column: number, row: number) => KeyFactory({ column, row });
@@ -21,9 +19,9 @@ export const Game: FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const blocksRef = useRef(Map<Record<BlockPosition>, Block>());
   const [isLoading, setLoading] = useState(false);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [columnsForUpdate, setColumnsForUpdate] = useState<number[]>([]);
   const [awaitingPower, setAwaitingPower] = useState<number>(creatRandomPower(1, 1));
-  const [minPower, setMinPower] = useState(1);
+  const [minPower, setMinPower] = useState(1); // Until 2048
   const [maxPower, setMaxPower] = useState(6);
 
   const getBlock = useCallback((column: number, row: number) => {
@@ -59,7 +57,7 @@ export const Game: FC = () => {
   }, [getBlock, moveBlockInColumn]);
 
   const updateColumn = useCallback(async (column: number) => {
-    for (let row = ROWS_COUNT; row >= 0; row--) {
+    for (let row = 0; row <= ROWS_COUNT; row++) {
       const current = getBlock(column, row);
 
       if (current) {
@@ -92,25 +90,14 @@ export const Game: FC = () => {
         }
 
         if (addCount) {
-          await Promise.all([
-            normalizeColumn(0),
-            normalizeColumn(1),
-            normalizeColumn(2),
-            normalizeColumn(3),
-            normalizeColumn(4),
-          ]);
+          // eslint-disable-next-line @typescript-eslint/no-shadow
+          await Promise.all(COLUMNS.map((column) => normalizeColumn(column)));
 
-          setTasks([
-            () => updateColumn(column),
-            () => updateColumn(column - 1),
-            () => updateColumn(column + 1),
-            () => updateColumn(column - 2),
-            () => updateColumn(column + 2),
-            () => updateColumn(column - 3),
-            () => updateColumn(column + 3),
-            () => updateColumn(column - 4),
-            () => updateColumn(column + 4),
-          ]);
+          const newColumnsForUpdate = [column];
+          for (let offset = 1; offset < COLUMNS.length; offset++) {
+            newColumnsForUpdate.push(column - offset, column + offset);
+          }
+          setColumnsForUpdate(newColumnsForUpdate);
 
           break;
         }
@@ -124,32 +111,30 @@ export const Game: FC = () => {
     const block = new Block(power, column, insertRow);
     setBlock(column, row, block);
     await block.moveTo(column, row);
-    setTasks([() => updateColumn(column)]);
-  }, [setBlock, updateColumn]);
+    setColumnsForUpdate([column]);
+  }, [setBlock]);
 
-  const handleColumnClick = useCallback((column: number) => {
+  const handleColumnClick = useCallback(async (column: number) => {
     let row = 0;
     for (; getBlock(column, row); row++);
 
     if (!isLoading && (row < ROWS_COUNT || getBlock(column, row - 1)?.power === awaitingPower)) {
-      setTasks([async () => {
-        setAwaitingPower(creatRandomPower(minPower, maxPower));
-        await insertBlock(awaitingPower, column, row);
-      }]);
+      setAwaitingPower(creatRandomPower(minPower, maxPower));
+      await insertBlock(awaitingPower, column, row);
     }
   }, [awaitingPower, getBlock, insertBlock, isLoading, maxPower, minPower]);
 
   useEffect(() => {
     (async () => {
-      if (!isLoading && tasks.length) {
-        const task = tasks[0];
+      if (!isLoading && columnsForUpdate.length) {
+        const columnForUpdate = columnsForUpdate[0];
         setLoading(true);
-        setTasks(tasks.slice(1));
-        await task();
+        setColumnsForUpdate(columnsForUpdate.slice(1));
+        await updateColumn(columnForUpdate);
         setLoading(false);
       }
     })();
-  }, [isLoading, tasks]);
+  }, [isLoading, columnsForUpdate, updateColumn]);
 
   return (
     <div className="w-92 bg-slate-900 rounded-2xl select-none">
