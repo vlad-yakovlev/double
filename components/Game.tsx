@@ -1,59 +1,174 @@
-import { FC, useCallback, useState } from 'react';
+import {
+  FC,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { Map, Record } from 'immutable';
+import { Block, BlockPosition, creatRandomPower } from '../classes/block';
+import { COLS_COUNT, ROWS_COUNT } from '../constants';
+import { getRange } from '../utils/array';
 import { Controls } from './Controls';
-import { Field } from './Field';
-import { BlockData } from '../types/block';
-import { createBlock, creatRandomBlock } from '../utils/block';
 
-const MAX_BLOCKS_IN_COLUMN = 7;
+type Task = () => Promise<void>;
+
+const COLUMNS = getRange(0, COLS_COUNT);
+const KeyFactory = Record<BlockPosition>({ column: 0, row: 0 });
+const getKey = (column: number, row: number) => KeyFactory({ column, row });
 
 export const Game: FC = () => {
-  const [columns, setColumns] = useState<BlockData[][]>([[], [], [], [], []]);
-  const [awaitingBlock, setAwaitingBlock] = useState<BlockData>(creatRandomBlock(1, 1));
+  const containerRef = useRef<HTMLDivElement>(null);
+  const blocksRef = useRef(Map<Record<BlockPosition>, Block>());
+  const [isLoading, setLoading] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [awaitingPower, setAwaitingPower] = useState<number>(creatRandomPower(1, 1));
   const [minPower, setMinPower] = useState(1);
   const [maxPower, setMaxPower] = useState(6);
 
-  const handleColumnClick = useCallback((columnIndex: number) => {
-    const newColumns = columns.map((blocks) => blocks.map((block) => block));
-    let newAwaitingBlock = awaitingBlock;
-    const targetColumn = newColumns[columnIndex] as (BlockData | undefined)[];
-    const prevColumn = newColumns[columnIndex - 1] as (BlockData | undefined)[] | undefined;
-    const nextColumn = newColumns[columnIndex + 1] as (BlockData | undefined)[] | undefined;
+  const getBlock = useCallback((column: number, row: number) => {
+    return blocksRef.current.get(getKey(column, row));
+  }, []);
 
-    if (targetColumn.length < MAX_BLOCKS_IN_COLUMN || targetColumn[targetColumn.length - 1]?.power === awaitingBlock.power) {
-      targetColumn.push(awaitingBlock);
+  const setBlock = useCallback((column: number, row: number, block: Block) => {
+    getBlock(column, row)?.el.remove();
+    blocksRef.current = blocksRef.current.set(getKey(column, row), block);
+    containerRef.current?.appendChild(block.el);
+  }, [getBlock]);
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const blockIndex = targetColumn.length - 1;
+  const moveBlockInColumn = useCallback(async (column: number, fromRow: number, toRow: number) => {
+    if (fromRow === toRow) return;
 
-        const targetColumnEquals = targetColumn[blockIndex]?.power === targetColumn[blockIndex - 1]?.power;
-        const prevColumnEquals = targetColumn[blockIndex]?.power === prevColumn?.[blockIndex]?.power;
-        const nextColumnEquals = targetColumn[blockIndex]?.power === nextColumn?.[blockIndex]?.power;
+    const block = getBlock(column, fromRow)!;
+    await block.moveTo(column, toRow);
 
-        const addCount = Number(targetColumnEquals) + Number(prevColumnEquals) + Number(nextColumnEquals);
-        if (addCount === 0) break;
+    blocksRef.current = blocksRef.current
+      .remove(getKey(column, fromRow))
+      .set(getKey(column, toRow), block);
+  }, [getBlock]);
 
-        targetColumn.splice(blockIndex, 1, createBlock(targetColumn[blockIndex]!.power + addCount));
+  const removeBlock = useCallback((column: number, row: number) => {
+    getBlock(column, row)?.el.remove();
+    blocksRef.current = blocksRef.current.remove(getKey(column, row));
+  }, [getBlock]);
 
-        if (targetColumnEquals) targetColumn.splice(blockIndex - 1, 1);
-        if (prevColumnEquals) prevColumn?.splice(blockIndex, 1);
-        if (nextColumnEquals) nextColumn?.splice(blockIndex, 1);
+  const normalizeColumn = useCallback(async (column: number) => {
+    let nextRow = 0;
+    const toRows = new Array(ROWS_COUNT).fill(-1).map((_, row) => (getBlock(column, row) ? nextRow++ : -1));
+    await Promise.all(toRows.map((toRow, fromRow) => toRow >= 0 && moveBlockInColumn(column, fromRow, toRow)));
+  }, [getBlock, moveBlockInColumn]);
+
+  const updateColumn = useCallback(async (column: number) => {
+    for (let row = ROWS_COUNT; row >= 0; row--) {
+      const current = getBlock(column, row);
+
+      if (current) {
+        const topNeighbor = getBlock(column, row - 1);
+        const leftNeighbor = getBlock(column - 1, row);
+        const rightNeighbor = getBlock(column + 1, row);
+
+        const topNeighborEquals = topNeighbor?.power === current.power;
+        const leftNeighborEquals = leftNeighbor?.power === current.power;
+        const rightNeighborEquals = rightNeighbor?.power === current.power;
+
+        const addCount = Number(topNeighborEquals) + Number(leftNeighborEquals) + Number(rightNeighborEquals);
+
+        if (topNeighborEquals && addCount === 1) {
+          await current.moveTo(column, row - 1);
+          removeBlock(column, row);
+          setBlock(column, row - 1, new Block(current.power + 1, column, row - 1));
+        } else if (addCount) {
+          await Promise.all([
+            topNeighborEquals && topNeighbor?.moveTo(column, row),
+            leftNeighborEquals && leftNeighbor?.moveTo(column, row),
+            rightNeighborEquals && rightNeighbor?.moveTo(column, row),
+          ]);
+
+          setBlock(column, row, new Block(current.power + addCount, column, row));
+
+          if (topNeighborEquals) removeBlock(column, row - 1);
+          if (leftNeighborEquals) removeBlock(column - 1, row);
+          if (rightNeighborEquals) removeBlock(column + 1, row);
+        }
+
+        if (addCount) {
+          await Promise.all([
+            normalizeColumn(0),
+            normalizeColumn(1),
+            normalizeColumn(2),
+            normalizeColumn(3),
+            normalizeColumn(4),
+          ]);
+
+          setTasks([
+            () => updateColumn(column),
+            () => updateColumn(column - 1),
+            () => updateColumn(column + 1),
+            () => updateColumn(column - 2),
+            () => updateColumn(column + 2),
+            () => updateColumn(column - 3),
+            () => updateColumn(column + 3),
+            () => updateColumn(column - 4),
+            () => updateColumn(column + 4),
+          ]);
+
+          break;
+        }
       }
-
-      newAwaitingBlock = creatRandomBlock(minPower, maxPower);
     }
+  }, [getBlock, normalizeColumn, removeBlock, setBlock]);
 
-    setColumns(newColumns);
-    setAwaitingBlock(newAwaitingBlock);
-  }, [columns, awaitingBlock, minPower, maxPower]);
+  const insertBlock = useCallback(async (power: number, column: number, row: number) => {
+    const insertRow = row < ROWS_COUNT - 1 ? ROWS_COUNT - 1 : row;
+
+    const block = new Block(power, column, insertRow);
+    setBlock(column, row, block);
+    await block.moveTo(column, row);
+    setTasks([() => updateColumn(column)]);
+  }, [setBlock, updateColumn]);
+
+  const handleColumnClick = useCallback((column: number) => {
+    let row = 0;
+    for (; getBlock(column, row); row++);
+
+    if (!isLoading && (row < ROWS_COUNT || getBlock(column, row - 1)?.power === awaitingPower)) {
+      setTasks([async () => {
+        setAwaitingPower(creatRandomPower(minPower, maxPower));
+        await insertBlock(awaitingPower, column, row);
+      }]);
+    }
+  }, [awaitingPower, getBlock, insertBlock, isLoading, maxPower, minPower]);
+
+  useEffect(() => {
+    (async () => {
+      if (!isLoading && tasks.length) {
+        const task = tasks[0];
+        setLoading(true);
+        setTasks(tasks.slice(1));
+        await task();
+        setLoading(false);
+      }
+    })();
+  }, [isLoading, tasks]);
 
   return (
-    <div className="w-92 bg-slate-900 rounded-2xl shadow-2xl select-none">
-      <Field
-        columns={columns}
-        onColumnClick={handleColumnClick}
-      />
-      <Controls awaitingBlock={awaitingBlock} />
+    <div className="w-92 bg-slate-900 rounded-2xl select-none">
+      <div className="p-2">
+        <div
+          className="relative grid grid-cols-field gap-2 "
+          ref={containerRef}
+        >
+          {COLUMNS.map((index) => (
+            <div
+              key={index}
+              className="h-124 bg-gradient-to-b from-slate-700 to-transparent rounded-lg"
+              onClick={() => handleColumnClick(index)}
+            />
+          ))}
+        </div>
+      </div>
+
+      <Controls awaitingPower={awaitingPower} />
     </div>
   );
 };
