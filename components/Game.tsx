@@ -11,7 +11,8 @@ import { Block, BlockPosition, creatRandomPower } from '../classes/block';
 import { COLS_COUNT, ROWS_COUNT } from '../constants';
 import { getRange } from '../utils/array';
 import { Controls } from './Controls';
-import { GameOver } from './GameOver';
+import { Button } from './Button';
+import { Overlay } from './Overlay';
 
 const COLUMNS = getRange(0, COLS_COUNT);
 const KeyFactory = Record<BlockPosition>({ column: 0, row: 0 });
@@ -164,7 +165,12 @@ export const Game: FC = () => {
 
       <Controls awaitingPower={awaitingPower} />
 
-      {isGameOver && <GameOver />}
+      {isGameOver && (
+        <Overlay>
+          <div className="text-4xl text-white uppercase">Game over</div>
+          <Button onClick={() => window.location.reload()}>Restart</Button>
+        </Overlay>
+      )}
     </div>
   );
 };
