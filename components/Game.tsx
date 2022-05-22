@@ -2,6 +2,7 @@ import {
   FC,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -10,6 +11,7 @@ import { Block, BlockPosition, creatRandomPower } from '../classes/block';
 import { COLS_COUNT, ROWS_COUNT } from '../constants';
 import { getRange } from '../utils/array';
 import { Controls } from './Controls';
+import { GameOver } from './GameOver';
 
 const COLUMNS = getRange(0, COLS_COUNT);
 const KeyFactory = Record<BlockPosition>({ column: 0, row: 0 });
@@ -124,6 +126,13 @@ export const Game: FC = () => {
     }
   }, [awaitingPower, getBlock, insertBlock, isLoading, maxPower, minPower]);
 
+  const isGameOver = useMemo(() => {
+    return !isLoading && COLUMNS.every((column) => {
+      const block = getBlock(column, ROWS_COUNT - 1);
+      return block && block.power !== awaitingPower;
+    });
+  }, [awaitingPower, getBlock, isLoading]);
+
   useEffect(() => {
     (async () => {
       if (!isLoading && columnsForUpdate.length) {
@@ -137,7 +146,7 @@ export const Game: FC = () => {
   }, [isLoading, columnsForUpdate, updateColumn]);
 
   return (
-    <div className="w-92 bg-slate-900 rounded-2xl select-none">
+    <div className="relative w-92 bg-slate-900 rounded-2xl select-none">
       <div className="p-2">
         <div
           className="relative grid grid-cols-field gap-2 "
@@ -154,6 +163,8 @@ export const Game: FC = () => {
       </div>
 
       <Controls awaitingPower={awaitingPower} />
+
+      {isGameOver && <GameOver />}
     </div>
   );
 };
