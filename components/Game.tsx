@@ -14,6 +14,7 @@ import { Controls } from './Controls';
 import { Button } from './Button';
 import { Overlay } from './Overlay';
 import { getBlockValue } from '../utils/block';
+import { ScoreBar } from './ScoreBar';
 
 const COLUMNS = getRange(0, COLS_COUNT);
 const KeyFactory = Record<BlockPosition>({ column: 0, row: 0 });
@@ -27,6 +28,7 @@ export const Game: FC = () => {
   const [awaitingPower, setAwaitingPower] = useState<number>(createRandomPower(1, 1));
   const minPower = useRef(1);
   const maxPower = useRef(6);
+  const [score, setScore] = useState(0);
   const [message, setMessage] = useState('');
 
   const getBlock = useCallback((column: number, row: number) => {
@@ -37,6 +39,7 @@ export const Game: FC = () => {
     getBlock(column, row)?.el.remove();
     blocksRef.current = blocksRef.current.set(getKey(column, row), block);
     containerRef.current?.appendChild(block.el);
+    setScore((oldScore) => oldScore + 2 ** block.power);
   }, [getBlock]);
 
   const moveBlockInColumn = useCallback(async (column: number, fromRow: number, toRow: number) => {
@@ -130,15 +133,19 @@ export const Game: FC = () => {
   }, [awaitingPower, getBlock, insertBlock, isLoading]);
 
   const isGameOver = useMemo(() => {
-    return COLUMNS.every((column) => {
+    return !isLoading && !columnsForUpdate.length && COLUMNS.every((column) => {
       const block = getBlock(column, ROWS_COUNT - 1);
       return block && block.power !== awaitingPower;
     });
-  }, [awaitingPower, getBlock]);
+  }, [awaitingPower, columnsForUpdate.length, getBlock, isLoading]);
+
+  const isMessageVisible = useMemo(() => {
+    return !isLoading && !columnsForUpdate.length && Boolean(message);
+  }, [columnsForUpdate.length, isLoading, message]);
 
   const updateBounds = useCallback(() => {
     const maxAllowedPower = minPower.current * 3 + 2 ** 3; // Looks more magical then 8
-    const hasGreaterPower = blocksRef.current.some((block) => block.power > maxAllowedPower);
+    const hasGreaterPower = blocksRef.current.some((block) => block.power >= maxAllowedPower);
     if (!hasGreaterPower) return;
 
     setMessage(`${getBlockValue(minPower.current)} cleared`);
@@ -179,6 +186,8 @@ export const Game: FC = () => {
 
   return (
     <div className="relative w-92 bg-slate-900 rounded-2xl select-none">
+      <ScoreBar score={score} />
+
       <div className="p-2">
         <div
           className="relative grid grid-cols-field gap-2 "
@@ -196,24 +205,20 @@ export const Game: FC = () => {
 
       <Controls awaitingPower={awaitingPower} />
 
-      {!isLoading && !columnsForUpdate.length && (
-        <>
-          {isGameOver && (
-          <Overlay>
-            <div className="text-4xl text-white uppercase">Game over</div>
-            <Button onClick={() => window.location.reload()}>Restart</Button>
-          </Overlay>
-          )}
-
-          {message ? (
-            <Overlay>
-              <div className="text-4xl text-white uppercase">{message}</div>
-              <Button onClick={() => setMessage('')}>Got it!</Button>
-            </Overlay>
-          ) : null}
-        </>
+      {isGameOver && (
+        <Overlay>
+          <div className="text-4xl text-white uppercase">Game over</div>
+          <div className="text-4xl text-white uppercase">{`Score: ${score}`}</div>
+          <Button onClick={() => window.location.reload()}>Restart</Button>
+        </Overlay>
       )}
 
+      {isMessageVisible ? (
+        <Overlay>
+          <div className="text-4xl text-white uppercase">{message}</div>
+          <Button onClick={() => setMessage('')}>Got it!</Button>
+        </Overlay>
+      ) : null}
     </div>
   );
 };
